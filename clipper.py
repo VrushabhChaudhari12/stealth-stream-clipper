@@ -22,6 +22,7 @@ import os
 import sys
 import re
 import time
+import json
 import socket
 import random
 import argparse
@@ -340,6 +341,8 @@ class AutoClipper:
     def __init__(self, platform: str, target: str, **cfg):
         self.platform = platform.lower()
         self.target = target.strip()
+        self.video_id: str | None = None
+        self.streamer_name: str | None = None
 
         # Spike detection parameters
         self.multiplier = float(cfg.get("multiplier", 2.0))
@@ -356,8 +359,10 @@ class AutoClipper:
         self.task = cfg.get("task", "transcribe")
         self.anti_copyright = bool(cfg.get("anti_copyright", True))
 
+        # Determine stream url and clean name
+        _, streamer_slug = self._stream_url()
+
         # Streamer-segregated folder: D:\GTA clipping\clips\<streamer_name>\
-        streamer_slug = clean_name(self.target)
         self.output_dir = os.path.join(CLIPS_DIR, streamer_slug)
         os.makedirs(self.output_dir, exist_ok=True)
 
@@ -376,8 +381,25 @@ class AutoClipper:
             ch = t.lstrip("#").replace("https://twitch.tv/", "").replace("twitch.tv/", "").lower()
             return f"twitch.tv/{ch}", ch
         else:
-            url = t if t.startswith("http") else f"https://www.youtube.com/{t if t.startswith('@') else '@' + t}/live"
-            return url, clean_name(t)
+            if "youtube.com/watch" in t or "youtu.be/" in t:
+                m = re.search(r"[?&]v=([a-zA-Z0-9_-]{11})", t) or re.search(r"youtu\.be/([a-zA-Z0-9_-]{11})", t)
+                if m:
+                    self.video_id = m.group(1)
+                try:
+                    req = Request(f"https://noembed.com/embed?url={t}", headers={"User-Agent": "Mozilla/5.0"})
+                    with urlopen(req, timeout=5) as resp:
+                        meta = json.loads(resp.read().decode())
+                        author = meta.get("author_name")
+                        if author:
+                            self.streamer_name = author
+                            return t, clean_name(author)
+                except Exception:
+                    pass
+                name = self.video_id if self.video_id else clean_name(t)
+                return t, name
+            else:
+                url = t if t.startswith("http") else f"https://www.youtube.com/{t if t.startswith('@') else '@' + t}/live"
+                return url, clean_name(t)
 
     def _hud(self, now: float, recent: int, base_rate: float, threshold: float):
         if not self.stream_start:
@@ -540,7 +562,12 @@ class AutoClipper:
         url, _ = self._stream_url()
         print(f"[*] Resolving YouTube Live Video ID for {url}...")
 
-        vid = None
+        vid = getattr(self, "video_id", None)
+        if not vid:
+            m = re.search(r"[?&]v=([a-zA-Z0-9_-]{11})", url) or re.search(r"youtu\.be/([a-zA-Z0-9_-]{11})", url)
+            if m:
+                vid = m.group(1)
+
         while not vid and self.is_running:
             try:
                 req = Request(url, headers={"User-Agent": "Mozilla/5.0"})
@@ -555,6 +582,7 @@ class AutoClipper:
                 sys.stdout.flush()
                 time.sleep(15)
 
+        self.video_id = vid
         print(f"[✔] Attached to YouTube Live Video ID: {vid}")
         chat = pytchat.create(video_id=vid)
         while chat.is_alive() and self.is_running:
@@ -617,7 +645,7 @@ def main():
         task=args.task,
         vertical=not args.landscape,
         no_subtitles=args.no_subtitles,
-        anti_copyright=not args.no_anti-copyright
+        anti_copyright=not args.no_anti_copyright
     ).run()
 
 
