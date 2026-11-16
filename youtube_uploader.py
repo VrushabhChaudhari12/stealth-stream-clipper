@@ -73,10 +73,10 @@ class YouTubeUploader:
                 print("=" * 65 + "\n")
                 return False
 
-        # 3. Run OAuth web flow on local port 8080
+        # 3. Run OAuth web flow with dynamic free port (port=0 avoids collisions like Steam/8080)
         print("[*] Launching browser to authorize your YouTube channel...")
         flow = InstalledAppFlow.from_client_secrets_file(self.secrets_file, SCOPES)
-        creds = flow.run_local_server(port=8080, prompt="consent", access_type="offline")
+        creds = flow.run_local_server(port=0, prompt="consent", access_type="offline")
         self.youtube = build("youtube", "v3", credentials=creds)
 
         with open(self.creds_file, "w") as f:
