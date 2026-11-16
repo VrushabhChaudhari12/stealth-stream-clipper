@@ -298,11 +298,12 @@ def purge_old_raw_clips(clips_dir: str = CLIPS_DIR) -> int:
     return removed_count
 
 
-def render_viral_clip(raw_mp4: str, ass_path: str | None, output_mp4: str,
-                      channel_name: str, vertical: bool = True,
+def render_viral_clip(raw_clip: str = "", ass_path: str | None = None, output_mp4: str = "",
+                      channel_name: str = "", vertical: bool = True,
                       anti_copyright: bool = True,
                       bgm_track: str | None = None,
-                      bgm_volume: float = 0.08) -> bool:
+                      bgm_volume: float = 0.08,
+                      raw_mp4: str = "") -> bool:
     """
     Applies the full viral post-production stack:
       1. 9:16 layout: 1080x1920 blurred backdrop + centered sharp gameplay
@@ -312,6 +313,11 @@ def render_viral_clip(raw_mp4: str, ass_path: str | None, output_mp4: str,
       5. Top streamer credit header badge
       6. Ambient GTA Background Music with sidechain audio ducking (never overshadows vocals)
     """
+    source_clip = raw_clip or raw_mp4
+    if not source_clip or not os.path.exists(source_clip):
+        print(f"[!] Source video file not found: {source_clip}")
+        return False
+
     # ── Video Filter Stack ──
     clean_channel = channel_name.replace("'", "").replace(":", "")
     badge_text = f"STREAM - @{clean_channel.upper()}"
@@ -383,7 +389,7 @@ def render_viral_clip(raw_mp4: str, ass_path: str | None, output_mp4: str,
         full_filter = f"{final_video_filter};{audio_complex}"
         cmd = [
             FFMPEG, "-y",
-            "-i", raw_mp4,
+            "-i", source_clip,
             "-stream_loop", "-1", "-i", bgm_track,
             "-filter_complex", full_filter,
             "-map", final_v_map,
@@ -406,7 +412,7 @@ def render_viral_clip(raw_mp4: str, ass_path: str | None, output_mp4: str,
 
         cmd = [
             FFMPEG, "-y",
-            "-i", raw_mp4,
+            "-i", source_clip,
             "-filter_complex", final_video_filter,
             "-map", final_v_map,
             "-map", "0:a?",
@@ -422,7 +428,7 @@ def render_viral_clip(raw_mp4: str, ass_path: str | None, output_mp4: str,
         if bgm_track:
             print("[!] BGM blend fallback: Retrying without BGM...")
             return render_viral_clip(
-                raw_mp4=raw_mp4,
+                raw_clip=source_clip,
                 ass_path=ass_path,
                 output_mp4=output_mp4,
                 channel_name=channel_name,
@@ -431,7 +437,7 @@ def render_viral_clip(raw_mp4: str, ass_path: str | None, output_mp4: str,
                 bgm_track=None
             )
         import shutil
-        shutil.copyfile(raw_mp4, output_mp4)
+        shutil.copyfile(source_clip, output_mp4)
         return False
     return True
 
