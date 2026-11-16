@@ -54,18 +54,24 @@ class YouTubeUploader:
             except Exception as e:
                 print(f"[!] Session token expired/invalid: {e}")
 
-        # 2. Check if client_secrets.json exists
+        # 2. Check if client_secrets.json or any client_secret*.json exists
         if not os.path.exists(self.secrets_file):
-            print("\n" + "=" * 65)
-            print("❌ MISSING 'client_secrets.json'")
-            print("=" * 65)
-            print("To connect your YouTube channel, follow these 3 quick steps:")
-            print("1. Go to Google Cloud Console: https://console.cloud.google.com/")
-            print("2. Enable 'YouTube Data API v3' in APIs & Services.")
-            print("3. Create an 'OAuth Client ID' (Desktop App), click 'Download JSON',")
-            print(f"   and save it as: {self.secrets_file}")
-            print("=" * 65 + "\n")
-            return False
+            import glob
+            matches = glob.glob(os.path.join(DIR, "client_secret*.json"))
+            if matches:
+                self.secrets_file = matches[0]
+                print(f"[*] Detected OAuth secret file: {os.path.basename(self.secrets_file)}")
+            else:
+                print("\n" + "=" * 65)
+                print("❌ MISSING 'client_secrets.json'")
+                print("=" * 65)
+                print("To connect your YouTube channel, follow these 3 quick steps:")
+                print("1. Go to Google Cloud Console: https://console.cloud.google.com/")
+                print("2. Enable 'YouTube Data API v3' in APIs & Services.")
+                print("3. Create an 'OAuth Client ID' (Desktop App), click 'Download JSON',")
+                print(f"   and save it as: {self.secrets_file}")
+                print("=" * 65 + "\n")
+                return False
 
         # 3. Run OAuth web flow on local port 8080
         print("[*] Launching browser to authorize your YouTube channel...")
