@@ -1,0 +1,26 @@
+# Ignore media and temporary buffers
+*.ts
+*.mp4
+*.mkv
+*.wav
+*.mp3
+*.srt
+
+# Ignore binary executables
+ffmpeg.exe
+ffprobe.exe
+*.exe
+
+# Ignore clips output directory
+clips/
+clips/*
+
+# Ignore python caches
+__pycache__/
+*.py[cod]
+*$py.class
+*.env
+.venv/
+env/
+.idea/
+.vscode/
