@@ -756,39 +756,69 @@ class AutoClipper:
 
     def _youtube_chat(self):
         import pytchat
-        url, _ = self._stream_url()
-        print(f"[*] Resolving YouTube Live Video ID for {url}...")
+        while self.is_running:
+            url, _ = self._stream_url()
+            vid = getattr(self, "video_id", None)
 
-        vid = getattr(self, "video_id", None)
-        if not vid:
-            m = re.search(r"[?&]v=([a-zA-Z0-9_-]{11})", url) or re.search(r"youtu\.be/([a-zA-Z0-9_-]{11})", url)
-            if m:
-                vid = m.group(1)
-
-        while not vid and self.is_running:
-            try:
-                req = Request(url, headers={"User-Agent": "Mozilla/5.0"})
-                html = urlopen(req, timeout=10).read().decode("utf-8", errors="ignore")
-                m = re.search(r'"videoId":"([a-zA-Z0-9_-]{11})"', html)
-                if m:
-                    vid = m.group(1)
-            except Exception:
-                pass
             if not vid:
-                sys.stdout.write("\r[⏳] Waiting for YouTube live broadcast...  ")
-                sys.stdout.flush()
-                time.sleep(15)
+                if "youtube.com/watch" in url or "youtu.be/" in url:
+                    m = re.search(r"[?&]v=([a-zA-Z0-9_-]{11})", url) or re.search(r"youtu\.be/([a-zA-Z0-9_-]{11})", url)
+                    if m:
+                        vid = m.group(1)
 
-        self.video_id = vid
-        print(f"[✔] Attached to YouTube Live Video ID: {vid}")
-        chat = pytchat.create(video_id=vid)
-        while chat.is_alive() and self.is_running:
+                if not vid:
+                    try:
+                        req = Request(url, headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"})
+                        html = urlopen(req, timeout=10).read().decode("utf-8", errors="ignore")
+                        # Only attach if stream is currently live
+                        if '"isLive":true' in html or '"status":"LIVE"' in html:
+                            m = re.search(r'"videoId":"([a-zA-Z0-9_-]{11})"', html)
+                            if m:
+                                vid = m.group(1)
+                    except Exception:
+                        pass
+
+            if not vid:
+                sys.stdout.write(f"\r[⏳ OFFLINE] Streamer is currently offline. Polling every 20s...   ")
+                sys.stdout.flush()
+                time.sleep(20)
+                continue
+
+            self.video_id = vid
+            print(f"\n[✔] Found Live Broadcast ID: {vid}")
             try:
-                for c in chat.get().sync_items():
-                    self._register(c.message)
-                time.sleep(0.4)
-            except Exception:
-                time.sleep(2)
+                chat = pytchat.create(video_id=vid)
+                if not chat.is_alive():
+                    print(f"[!] Live chat is inactive or stream ended for {vid}. Retrying in 15s...")
+                    self.video_id = None
+                    time.sleep(15)
+                    continue
+
+                print(f"[✔] Attached to live chat for {vid}. Listening for velocity spikes...")
+                while chat.is_alive() and self.is_running:
+                    try:
+                        for c in chat.get().sync_items():
+                            self._register(c.message)
+                        time.sleep(0.4)
+                    except Exception:
+                        time.sleep(2)
+
+                print(f"\n[!] Live stream {vid} ended or chat disconnected.")
+                self.video_id = None
+                time.sleep(10)
+            except Exception as e:
+                print(f"\n[!] Live chat notice ({e}). Stream may have ended. Rechecking in 20s...")
+                self.video_id = None
+                time.sleep(20)
+
+    def slice_offline(self, start_sec: int = 60):
+        """Allows extracting, editing, and publishing viral clips from a recorded stream file offline."""
+        if not os.path.exists(self.stream_file):
+            print(f"[!] Recorded stream file not found: {self.stream_file}")
+            return
+        print(f"[*] Offline VOD Mode: Slicing {self.duration}s clip at offset {start_sec}s from {os.path.basename(self.stream_file)}...")
+        self.stream_start = time.time() - (start_sec + self.pre_roll)
+        self._clip_worker(time.time())
 
     def run(self):
         url, name = self._stream_url()
@@ -832,6 +862,7 @@ def main():
     p.add_argument("--auto-upload", action="store_true", help="Automatically upload saved clips to YouTube Shorts")
     p.add_argument("--privacy", default="public", choices=["public", "unlisted", "private"], help="YouTube upload privacy status")
     p.add_argument("--clean-older", action="store_true", help="Purge older raw clips and temporary files now")
+    p.add_argument("--slice-vod", type=int, default=-1, help="Offset in seconds to slice and publish a clip directly from recorded .ts stream while offline")
 
     args = p.parse_args()
 
@@ -846,7 +877,7 @@ def main():
     if not args.platform:
         args.platform = "youtube" if (args.target.startswith("@") or "youtube" in args.target) else "twitch"
 
-    AutoClipper(
+    clipper = AutoClipper(
         platform=args.platform,
         target=args.target,
         multiplier=args.multiplier,
@@ -862,7 +893,12 @@ def main():
         privacy=args.privacy,
         use_bgm=not args.no_bgm,
         bgm_volume=args.bgm_volume
-    ).run()
+    )
+
+    if args.slice_vod >= 0:
+        clipper.slice_offline(args.slice_vod)
+    else:
+        clipper.run()
 
 
 if __name__ == "__main__":
