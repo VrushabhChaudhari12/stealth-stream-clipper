@@ -360,6 +360,8 @@ class AutoClipper:
         self.no_subs = bool(cfg.get("no_subtitles", False))
         self.task = cfg.get("task", "transcribe")
         self.anti_copyright = bool(cfg.get("anti_copyright", True))
+        self.auto_upload = bool(cfg.get("auto_upload", False))
+        self.privacy = cfg.get("privacy", "public")
 
         # Determine stream url and clean name
         _, streamer_slug = self._stream_url()
@@ -497,17 +499,62 @@ class AutoClipper:
         )
         print(f"🎉 [CLIP READY] Saved -> {final_clip}")
 
-        # Metadata & Attribution
+        # Generate Clickbait Title & 9:16 Vertical Thumbnail
+        thumb_file = os.path.join(self.output_dir, f"clip_{ts}_thumb.jpg")
+        meta_file = os.path.join(self.output_dir, f"clip_{ts}_meta.json")
+
+        transcript_sample = ""
+        if os.path.exists(srt_file):
+            with open(srt_file, "r", encoding="utf-8", errors="ignore") as f:
+                transcript_sample = f.read()
+
+        import viral_hook_engine
+        clickbait_title = viral_hook_engine.generate_clickbait_title(channel, transcript_sample)
         url, _ = self._stream_url()
+        seo_meta = viral_hook_engine.generate_seo_metadata(channel, clickbait_title, url)
+
+        # Generate custom thumbnail
+        viral_hook_engine.create_clickbait_thumbnail(
+            final_clip, thumb_file, clickbait_title.replace("?!", "?").replace("!", ""), FFMPEG
+        )
+
+        with open(meta_file, "w", encoding="utf-8") as mf:
+            json.dump(seo_meta, mf, indent=2, ensure_ascii=False)
+
+        print(f"🖼️ [THUMBNAIL READY] -> {thumb_file}")
+        print(f"🎯 [CLICKBAIT TITLE] -> {clickbait_title}")
+
+        # Metadata & Attribution
         with open(credit_file, "w", encoding="utf-8") as cf:
             cf.write("=== FAIR USE ATTRIBUTION & METADATA ===\n")
+            cf.write(f"Title: {clickbait_title}\n")
             cf.write(f"Creator: @{channel}\n")
             cf.write(f"Platform: {self.platform.upper()}\n")
             cf.write(f"Source URL: {url}\n")
             cf.write(f"Clipped At: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n\n")
             cf.write("Suggested Caption:\n")
-            cf.write(f"Chat went completely crazy here! 😂🔥 Credits to @{channel}\n\n")
+            cf.write(f"{clickbait_title}\n\n")
             cf.write(f"Hashtags: #gaming #clips #{self.platform} #{clean_name(channel)} #shorts #trending\n")
+
+        # Auto-upload to YouTube if configured
+        if self.auto_upload:
+            try:
+                from youtube_uploader import YouTubeUploader, CREDENTIALS_PATH
+                if os.path.exists(CREDENTIALS_PATH):
+                    print("[*] Auto-uploading clip to YouTube Shorts...")
+                    uploader = YouTubeUploader()
+                    uploader.upload_short(
+                        video_path=final_clip,
+                        title=seo_meta["title"],
+                        description=seo_meta["description"],
+                        tags=seo_meta["tags"],
+                        thumbnail_path=thumb_file,
+                        privacy_status=self.privacy
+                    )
+                else:
+                    print("[!] YouTube credentials not found. Run 'python youtube_uploader.py --auth' once to link your channel.")
+            except Exception as e:
+                print(f"[!] YouTube auto-upload notice: {e}")
 
     def _record(self):
         url, _ = self._stream_url()
@@ -630,6 +677,8 @@ def main():
     p.add_argument("--landscape", action="store_true", help="Output standard 16:9 widescreen instead of 9:16 vertical")
     p.add_argument("--no-subtitles", action="store_true", help="Disable subtitle generation")
     p.add_argument("--no-anti-copyright", action="store_true", help="Disable anti-copyright filters")
+    p.add_argument("--auto-upload", action="store_true", help="Automatically upload saved clips to YouTube Shorts")
+    p.add_argument("--privacy", default="public", choices=["public", "unlisted", "private"], help="YouTube upload privacy status")
 
     args = p.parse_args()
 
@@ -647,7 +696,9 @@ def main():
         task=args.task,
         vertical=not args.landscape,
         no_subtitles=args.no_subtitles,
-        anti_copyright=not args.no_anti_copyright
+        anti_copyright=not args.no_anti_copyright,
+        auto_upload=args.auto_upload,
+        privacy=args.privacy
     ).run()
 
 
