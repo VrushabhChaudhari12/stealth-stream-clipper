@@ -534,7 +534,17 @@ class AutoClipper:
     def _register(self, text: str):
         now = time.time()
         lower = text.lower()
-        weight = 1.6 if any(k in lower for k in HYPE_KEYWORDS) else 1.0
+        weight = 1.0
+        if any(k in lower for k in HYPE_KEYWORDS):
+            weight = 1.6
+        # Emotional reaction multipliers (dumped, cooked, pause, ayo, sus, l, lmao)
+        try:
+            import virality_engine
+            for emot, emot_w in virality_engine.CHAT_HYPE_EMOTIONS.items():
+                if emot.lower() in lower:
+                    weight = max(weight, emot_w)
+        except Exception:
+            pass
         self.history.append((now, weight))
         self._check_spike(now)
 
@@ -593,12 +603,13 @@ class AutoClipper:
 
         # Multilingual transcription
         ass_ready = False
+        all_words = []
         if not self.no_subs:
             print("[*] Transcribing speech (Hindi/English multilingual 'base' model)...")
             if self.whisper_model is None:
                 from faster_whisper import WhisperModel
                 self.whisper_model = WhisperModel("base", device="cpu", compute_type="int8")
-            ass_ready, _ = transcribe_clip(raw_clip, ass_file, srt_file, self.whisper_model, task=self.task)
+            ass_ready, all_words = transcribe_clip(raw_clip, ass_file, srt_file, self.whisper_model, task=self.task)
 
         # Viral post-production rendering with GTA Background Music
         _, channel = self._stream_url()
@@ -621,22 +632,21 @@ class AutoClipper:
         )
         print(f"🎉 [CLIP READY] Saved -> {final_clip}")
 
-        # Generate Clickbait Title & 9:16 Vertical Thumbnail
+        # Emotion & 18% Spicy Title / Thumbnail Generation
+        import virality_engine
+        all_words_text = " ".join(w.get("word", "") for w in all_words) if all_words else ""
+        dominant_emotion, emotion_mult = virality_engine.score_emotion_context(all_words_text)
+
+        clickbait_title = virality_engine.generate_spicy_title(channel, dominant_emotion)
+        url, _ = self._stream_url()
+        seo_meta = virality_engine.generate_spicy_seo(channel, clickbait_title, url)
+
+        # Generate custom thumbnail (3-4 words max, strictly compliments title)
         thumb_file = os.path.join(self.output_dir, f"clip_{ts}_thumb.jpg")
         meta_file = os.path.join(self.output_dir, f"clip_{ts}_meta.json")
 
-        transcript_sample = ""
-        if os.path.exists(srt_file):
-            with open(srt_file, "r", encoding="utf-8", errors="ignore") as f:
-                transcript_sample = f.read()
-
+        thumb_hook = virality_engine.pick_spicy_thumb_hook(clickbait_title)
         import viral_hook_engine
-        clickbait_title = viral_hook_engine.generate_clickbait_title(channel, transcript_sample)
-        url, _ = self._stream_url()
-        seo_meta = viral_hook_engine.generate_seo_metadata(channel, clickbait_title, url)
-
-        # Generate custom thumbnail (3-4 words max, strictly compliments title)
-        thumb_hook = viral_hook_engine.pick_thumbnail_hook(clickbait_title)
         viral_hook_engine.create_clickbait_thumbnail(
             final_clip, thumb_file, thumb_hook, FFMPEG
         )
@@ -644,8 +654,17 @@ class AutoClipper:
         with open(meta_file, "w", encoding="utf-8") as mf:
             json.dump(seo_meta, mf, indent=2, ensure_ascii=False)
 
-        print(f"🖼️ [THUMBNAIL READY] -> {thumb_file}")
-        print(f"🎯 [CLICKBAIT TITLE] -> {clickbait_title}")
+        print(f"🖼️ [THUMBNAIL READY] -> {thumb_file} (Hook: '{thumb_hook}')")
+        print(f"🎯 [SPICY TITLE] -> {clickbait_title}")
+        print(f"🎭 [EMOTION DETECTED] -> {dominant_emotion.upper()} ({emotion_mult:.2f}x intensity)")
+
+        # Run Pre-Upload Virality Audit
+        audit = virality_engine.ViralityTester.audit_clip(
+            final_clip, all_words, clickbait_title, FFMPEG
+        )
+        print(f"📊 [VIRALITY SCORE] {audit['score']}/10.0 (Passing Threshold: 7.0/10)")
+        for check_name, check_res in audit['checks'].items():
+            print(f"    - {check_name}: {check_res}")
 
         # Metadata & Attribution
         with open(credit_file, "w", encoding="utf-8") as cf:
@@ -657,30 +676,33 @@ class AutoClipper:
             cf.write(f"Clipped At: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n\n")
             cf.write("Suggested Caption:\n")
             cf.write(f"{clickbait_title}\n\n")
-            cf.write(f"Hashtags: #gaming #clips #{self.platform} #{clean_name(channel)} #shorts #trending\n")
+            cf.write("Hashtags: #shorts #gaming #viral\n")
 
-        # Auto-upload to YouTube if configured
+        # Auto-upload to YouTube if configured AND Virality Test passes
         if self.auto_upload:
-            try:
-                from youtube_uploader import YouTubeUploader, CREDENTIALS_PATH
-                if os.path.exists(CREDENTIALS_PATH):
-                    print("[*] Auto-uploading clip to YouTube Shorts...")
-                    uploader = YouTubeUploader()
-                    upload_res = uploader.upload_short(
-                        video_path=final_clip,
-                        title=seo_meta["title"],
-                        description=seo_meta["description"],
-                        tags=seo_meta["tags"],
-                        thumbnail_path=thumb_file,
-                        privacy_status=self.privacy
-                    )
-                    if upload_res.get("success"):
-                        print("[🗑️] Short posted live to YouTube! Cleaning up raw clip and temporary files...")
-                        cleanup_clip_assets(raw_clip, ass_file, srt_file)
-                else:
-                    print("[!] YouTube credentials not found. Run 'python youtube_uploader.py --auth' once to link your channel.")
-            except Exception as e:
-                print(f"[!] YouTube auto-upload notice: {e}")
+            if not audit["passed"]:
+                print(f"[⚠️ VIRALITY GATE] Clip scored {audit['score']}/10 (< 7.0 threshold). Holding from auto-upload to protect channel seed-audience algorithm.")
+            else:
+                try:
+                    from youtube_uploader import YouTubeUploader, CREDENTIALS_PATH
+                    if os.path.exists(CREDENTIALS_PATH):
+                        print("[*] Virality check PASSED. Auto-uploading clip to YouTube Shorts...")
+                        uploader = YouTubeUploader()
+                        upload_res = uploader.upload_short(
+                            video_path=final_clip,
+                            title=seo_meta["title"],
+                            description=seo_meta["description"],
+                            tags=seo_meta["tags"],
+                            thumbnail_path=thumb_file,
+                            privacy_status=self.privacy
+                        )
+                        if upload_res.get("success"):
+                            print("[🗑️] Short posted live to YouTube! Cleaning up raw clip and temporary files...")
+                            cleanup_clip_assets(raw_clip, ass_file, srt_file)
+                    else:
+                        print("[!] YouTube credentials not found. Run 'python youtube_uploader.py --auth' once to link your channel.")
+                except Exception as e:
+                    print(f"[!] YouTube auto-upload notice: {e}")
 
     def _record(self):
         url, _ = self._stream_url()
