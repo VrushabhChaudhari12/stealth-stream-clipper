@@ -273,7 +273,7 @@ def render_viral_clip(raw_mp4: str, ass_path: str | None, output_mp4: str,
         composite = (
             f"{bg_filter}{fg_filter}"
             f"[bg][fg]overlay=(W-w)/2:(H-h)/2[base];"
-            f"[base]drawtext=text='{badge_text}':fontcolor=white:fontsize=32:bold=1:"
+            f"[base]drawtext=text='{badge_text}':fontcolor=white:fontsize=32:"
             f"box=1:boxcolor=black@0.65:boxborderw=10:x=(w-text_w)/2:y=200[vbadge]"
         )
         current_v = "[vbadge]"
@@ -281,7 +281,7 @@ def render_viral_clip(raw_mp4: str, ass_path: str | None, output_mp4: str,
         if anti_copyright:
             composite = (
                 "[0:v]eq=contrast=1.04:brightness=0.01:saturation=1.06,unsharp=3:3:0.4:3:3:0.0[base];"
-                f"[base]drawtext=text='{badge_text}':fontcolor=white:fontsize=28:bold=1:"
+                f"[base]drawtext=text='{badge_text}':fontcolor=white:fontsize=28:"
                 f"box=1:boxcolor=black@0.6:boxborderw=8:x=40:y=40[vbadge]"
             )
             current_v = "[vbadge]"
