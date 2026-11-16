@@ -322,11 +322,11 @@ def render_viral_clip(raw_mp4: str, ass_path: str | None, output_mp4: str,
             "[0:v]scale=1080:1920:force_original_aspect_ratio=increase,"
             "crop=1080:1920,boxblur=25:3,eq=brightness=-0.12:saturation=1.2[bg];"
         )
-        # Foreground: crisp gameplay with micro-zoom & color pop
+        # Foreground: crisp gameplay with punch-in zoom & color pop
         if anti_copyright:
             fg_filter = (
-                "[0:v]zoompan=z='min(zoom+0.0006,1.04)':d=1:x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':s=1920x1080:fps=60,"
-                "eq=contrast=1.04:brightness=0.01:saturation=1.08,unsharp=3:3:0.4:3:3:0.0,"
+                "[0:v]zoompan=z='min(zoom+0.0008,1.14)':d=1:x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':s=1920x1080:fps=60,"
+                "eq=contrast=1.06:brightness=0.01:saturation=1.12,unsharp=3:3:0.4:3:3:0.0,"
                 "scale=1080:-1[fg];"
             )
         else:
@@ -458,9 +458,9 @@ class AutoClipper:
         self.baseline = int(cfg.get("baseline_sec", 300))
         self.cooldown = int(cfg.get("cooldown", 90))
 
-        # Output formatting
-        self.pre_roll = int(cfg.get("pre_roll", 25))
-        self.duration = int(cfg.get("duration", 50))
+        # Output formatting (25-45s sweet spot)
+        self.pre_roll = int(cfg.get("pre_roll", 15))
+        self.duration = int(cfg.get("duration", 35))
         self.vertical = bool(cfg.get("vertical", True))
         self.no_subs = bool(cfg.get("no_subtitles", False))
         self.task = cfg.get("task", "transcribe")
@@ -629,9 +629,10 @@ class AutoClipper:
         url, _ = self._stream_url()
         seo_meta = viral_hook_engine.generate_seo_metadata(channel, clickbait_title, url)
 
-        # Generate custom thumbnail
+        # Generate custom thumbnail (3-4 words max, strictly compliments title)
+        thumb_hook = viral_hook_engine.pick_thumbnail_hook(clickbait_title)
         viral_hook_engine.create_clickbait_thumbnail(
-            final_clip, thumb_file, clickbait_title.replace("?!", "?").replace("!", ""), FFMPEG
+            final_clip, thumb_file, thumb_hook, FFMPEG
         )
 
         with open(meta_file, "w", encoding="utf-8") as mf:
@@ -790,8 +791,8 @@ def main():
     p.add_argument("--target", default="", help="Streamer channel, handle, or URL")
     p.add_argument("--multiplier", type=float, default=2.0, help="Spike multiplier vs baseline (default: 2.0)")
     p.add_argument("--min-msgs", type=int, default=8, help="Min msgs/10s for spike trigger (default: 8)")
-    p.add_argument("--pre-roll", type=int, default=25, help="Seconds before spike to cut (default: 25)")
-    p.add_argument("--duration", type=int, default=50, help="Clip length in seconds (default: 50)")
+    p.add_argument("--pre-roll", type=int, default=15, help="Seconds before spike to cut (default: 15)")
+    p.add_argument("--duration", type=int, default=35, help="Clip length in seconds (default: 35, 25-45s viral sweet spot)")
     p.add_argument("--cooldown", type=int, default=90, help="Cooldown between clips in seconds (default: 90)")
     p.add_argument("--task", choices=["transcribe", "translate"], default="transcribe",
                    help="'transcribe' for native Hindi/English, 'translate' to translate into English subtitles")
