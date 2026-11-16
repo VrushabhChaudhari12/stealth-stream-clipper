@@ -302,7 +302,7 @@ def render_viral_clip(raw_mp4: str, ass_path: str | None, output_mp4: str,
     # ── Audio Filter Stack (Anti-Fingerprint Pitch/EQ Shift) ──
     if anti_copyright:
         audio_filter = (
-            "asetrate=44100*1.02,aresample=44100,"
+            "asetrate=44100*1.02,aresample=44100:async=1,"
             "equalizer=f=1200:t=q:w=1.5:g=1.2,"
             "highpass=f=80,lowpass=f=15500,"
             "loudnorm=I=-16:TP=-1.5:LRA=11"
@@ -315,9 +315,11 @@ def render_viral_clip(raw_mp4: str, ass_path: str | None, output_mp4: str,
         "-i", raw_mp4,
         "-filter_complex", final_video_filter,
         "-map", final_v_map,
+        "-map", "0:a?",
         "-af", audio_filter,
         "-c:v", "libx264", "-preset", "veryfast", "-crf", "22",
         "-c:a", "aac", "-b:a", "160k",
+        "-ar", "44100",
         output_mp4
     ]
 
