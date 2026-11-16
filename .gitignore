@@ -31,4 +31,5 @@ transcript_*
 
 # Ignore local YouTube OAuth tokens and secrets
 client_secrets.json
+client_secret*.json
 youtube_credentials.json

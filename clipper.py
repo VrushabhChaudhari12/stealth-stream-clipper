@@ -35,6 +35,7 @@ from urllib.request import Request, urlopen
 # ─── Directories & Paths ──────────────────────────────────────────────────────
 DIR = os.path.dirname(os.path.abspath(__file__))
 CLIPS_DIR = os.path.join(DIR, "clips")
+GTA_TRACKS_DIR = os.path.join(DIR, "gta_tracks")
 
 
 def _resolve_ffmpeg() -> str:
@@ -228,7 +229,7 @@ def slice_stream_sync(source_ts: str, start_sec: int, duration: int, output_mp4:
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# 4. RENDERER (9:16 Vertical + Anti-Copyright + Viral Subtitles)
+# 4. RENDERER (9:16 Vertical + Anti-Copyright + Subtitles + Ducked GTA BGM)
 # ─────────────────────────────────────────────────────────────────────────────
 
 def esc_path(p: str) -> str:
@@ -236,9 +237,72 @@ def esc_path(p: str) -> str:
     return p.replace("\\", "/").replace(":", "\\:")
 
 
+def get_random_gta_track(tracks_dir: str = GTA_TRACKS_DIR) -> str | None:
+    """Returns a random audio track from the GTA tracks directory."""
+    if os.path.exists(tracks_dir):
+        tracks = [
+            os.path.join(tracks_dir, f)
+            for f in os.listdir(tracks_dir)
+            if f.lower().endswith((".mp3", ".wav", ".aac", ".m4a", ".ogg"))
+        ]
+        if tracks:
+            return random.choice(tracks)
+    return None
+
+
+def cleanup_clip_assets(*paths: str):
+    """Safely removes raw/intermediate clip assets once a Short is uploaded."""
+    for p in paths:
+        if p and os.path.exists(p):
+            try:
+                os.remove(p)
+                print(f"[🗑️ CLEANUP] Removed: {os.path.basename(p)}")
+            except Exception as e:
+                print(f"[!] Cleanup notice ({os.path.basename(p)}): {e}")
+
+
+def purge_old_raw_clips(clips_dir: str = CLIPS_DIR) -> int:
+    """
+    Scans clips directory and purges raw clips (_raw.mp4) and intermediate subtitle files (.ass, .srt)
+    where a final rendered clip (_final.mp4) already exists.
+    """
+    removed_count = 0
+    if not os.path.exists(clips_dir):
+        return 0
+    print(f"[*] Scanning {clips_dir} for older raw clips and temporary files...")
+    for root, _, files in os.walk(clips_dir):
+        for f in files:
+            if f.endswith("_raw.mp4"):
+                base_stem = f.replace("_raw.mp4", "")
+                final_f = f"{base_stem}_final.mp4"
+                if final_f in files:
+                    try:
+                        p = os.path.join(root, f)
+                        sz_mb = os.path.getsize(p) / (1024 * 1024)
+                        os.remove(p)
+                        removed_count += 1
+                        print(f"[🗑️ PURGED RAW] {f} ({sz_mb:.1f} MB freed)")
+                    except Exception as e:
+                        print(f"[!] Purge error: {e}")
+            elif f.endswith(".ass") or f.endswith(".srt"):
+                stem = os.path.splitext(f)[0]
+                final_f = f"{stem}_final.mp4"
+                if final_f in files:
+                    try:
+                        os.remove(os.path.join(root, f))
+                        removed_count += 1
+                        print(f"[🗑️ PURGED TEMP] {f}")
+                    except Exception:
+                        pass
+    print(f"[✔] Cleanup complete! Purged {removed_count} temporary/raw files.")
+    return removed_count
+
+
 def render_viral_clip(raw_mp4: str, ass_path: str | None, output_mp4: str,
                       channel_name: str, vertical: bool = True,
-                      anti_copyright: bool = True) -> bool:
+                      anti_copyright: bool = True,
+                      bgm_track: str | None = None,
+                      bgm_volume: float = 0.08) -> bool:
     """
     Applies the full viral post-production stack:
       1. 9:16 layout: 1080x1920 blurred backdrop + centered sharp gameplay
@@ -246,12 +310,11 @@ def render_viral_clip(raw_mp4: str, ass_path: str | None, output_mp4: str,
       3. Rubberband pitch & spectral EQ (Audio Anti-Fingerprint)
       4. Hormozi/MrBeast yellow active word ASS subtitle overlay
       5. Top streamer credit header badge
+      6. Ambient GTA Background Music with sidechain audio ducking (never overshadows vocals)
     """
     # ── Video Filter Stack ──
     clean_channel = channel_name.replace("'", "").replace(":", "")
     badge_text = f"STREAM - @{clean_channel.upper()}"
-
-    filters = []
 
     if vertical:
         # Background: scaled, cropped to 1080x1920, darkened and blurred
@@ -299,32 +362,74 @@ def render_viral_clip(raw_mp4: str, ass_path: str | None, output_mp4: str,
         final_video_filter = composite
         final_v_map = current_v
 
-    # ── Audio Filter Stack (Anti-Fingerprint Pitch/EQ Shift) ──
-    if anti_copyright:
-        audio_filter = (
-            "asetrate=44100*1.02,aresample=44100:async=1,"
-            "equalizer=f=1200:t=q:w=1.5:g=1.2,"
-            "highpass=f=80,lowpass=f=15500,"
-            "loudnorm=I=-16:TP=-1.5:LRA=11"
+    # ── Background Music & Audio Ducking Stack ──
+    if bgm_track and os.path.exists(bgm_track):
+        audio_complex = (
+            "[0:a]aresample=44100:async=1[vocal_a];"
+            f"[1:a]aresample=44100,volume={bgm_volume:.2f}[bgm_raw];"
+            "[bgm_raw][vocal_a]sidechaincompress=threshold=0.08:ratio=4:attack=100:release=600[ducked_bgm];"
+            "[vocal_a][ducked_bgm]amix=inputs=2:duration=first:weights=1.0 0.7[mixed_a];"
         )
-    else:
-        audio_filter = "aresample=async=1"
+        if anti_copyright:
+            audio_complex += (
+                "[mixed_a]asetrate=44100*1.02,aresample=44100:async=1,"
+                "equalizer=f=1200:t=q:w=1.5:g=1.2,"
+                "highpass=f=80,lowpass=f=15500,"
+                "loudnorm=I=-16:TP=-1.5:LRA=11[aout]"
+            )
+        else:
+            audio_complex += "[mixed_a]loudnorm=I=-16:TP=-1.5:LRA=11[aout]"
 
-    cmd = [
-        FFMPEG, "-y",
-        "-i", raw_mp4,
-        "-filter_complex", final_video_filter,
-        "-map", final_v_map,
-        "-map", "0:a?",
-        "-af", audio_filter,
-        "-c:v", "libx264", "-preset", "veryfast", "-crf", "22",
-        "-c:a", "aac", "-b:a", "160k",
-        "-ar", "44100",
-        output_mp4
-    ]
+        full_filter = f"{final_video_filter};{audio_complex}"
+        cmd = [
+            FFMPEG, "-y",
+            "-i", raw_mp4,
+            "-stream_loop", "-1", "-i", bgm_track,
+            "-filter_complex", full_filter,
+            "-map", final_v_map,
+            "-map", "[aout]",
+            "-c:v", "libx264", "-preset", "veryfast", "-crf", "22",
+            "-c:a", "aac", "-b:a", "160k",
+            "-ar", "44100",
+            output_mp4
+        ]
+    else:
+        if anti_copyright:
+            audio_filter = (
+                "asetrate=44100*1.02,aresample=44100:async=1,"
+                "equalizer=f=1200:t=q:w=1.5:g=1.2,"
+                "highpass=f=80,lowpass=f=15500,"
+                "loudnorm=I=-16:TP=-1.5:LRA=11"
+            )
+        else:
+            audio_filter = "aresample=async=1"
+
+        cmd = [
+            FFMPEG, "-y",
+            "-i", raw_mp4,
+            "-filter_complex", final_video_filter,
+            "-map", final_v_map,
+            "-map", "0:a?",
+            "-af", audio_filter,
+            "-c:v", "libx264", "-preset", "veryfast", "-crf", "22",
+            "-c:a", "aac", "-b:a", "160k",
+            "-ar", "44100",
+            output_mp4
+        ]
 
     res = subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     if res.returncode != 0 or not os.path.exists(output_mp4) or os.path.getsize(output_mp4) == 0:
+        if bgm_track:
+            print("[!] BGM blend fallback: Retrying without BGM...")
+            return render_viral_clip(
+                raw_mp4=raw_mp4,
+                ass_path=ass_path,
+                output_mp4=output_mp4,
+                channel_name=channel_name,
+                vertical=vertical,
+                anti_copyright=anti_copyright,
+                bgm_track=None
+            )
         import shutil
         shutil.copyfile(raw_mp4, output_mp4)
         return False
@@ -362,6 +467,9 @@ class AutoClipper:
         self.anti_copyright = bool(cfg.get("anti_copyright", True))
         self.auto_upload = bool(cfg.get("auto_upload", False))
         self.privacy = cfg.get("privacy", "public")
+        self.use_bgm = bool(cfg.get("use_bgm", True))
+        self.bgm_volume = float(cfg.get("bgm_volume", 0.08))
+        self.bgm_dir = cfg.get("bgm_dir", GTA_TRACKS_DIR)
 
         # Determine stream url and clean name
         _, streamer_slug = self._stream_url()
@@ -486,8 +594,14 @@ class AutoClipper:
                 self.whisper_model = WhisperModel("base", device="cpu", compute_type="int8")
             ass_ready, _ = transcribe_clip(raw_clip, ass_file, srt_file, self.whisper_model, task=self.task)
 
-        # Viral post-production rendering
+        # Viral post-production rendering with GTA Background Music
         _, channel = self._stream_url()
+        bgm_track = None
+        if self.use_bgm:
+            bgm_track = get_random_gta_track(self.bgm_dir)
+            if bgm_track:
+                print(f"🎵 [GTA BGM] Selected: '{os.path.basename(bgm_track)}' (Volume: {self.bgm_volume * 100:.0f}%, Ducking: ACTIVE)")
+
         print(f"[*] Rendering viral clip (Vertical: {self.vertical}, Anti-Copyright: {self.anti_copyright})...")
         render_viral_clip(
             raw_clip=raw_clip,
@@ -495,7 +609,9 @@ class AutoClipper:
             output_mp4=final_clip,
             channel_name=channel,
             vertical=self.vertical,
-            anti_copyright=self.anti_copyright
+            anti_copyright=self.anti_copyright,
+            bgm_track=bgm_track,
+            bgm_volume=self.bgm_volume
         )
         print(f"🎉 [CLIP READY] Saved -> {final_clip}")
 
@@ -543,7 +659,7 @@ class AutoClipper:
                 if os.path.exists(CREDENTIALS_PATH):
                     print("[*] Auto-uploading clip to YouTube Shorts...")
                     uploader = YouTubeUploader()
-                    uploader.upload_short(
+                    upload_res = uploader.upload_short(
                         video_path=final_clip,
                         title=seo_meta["title"],
                         description=seo_meta["description"],
@@ -551,6 +667,9 @@ class AutoClipper:
                         thumbnail_path=thumb_file,
                         privacy_status=self.privacy
                     )
+                    if upload_res.get("success"):
+                        print("[🗑️] Short posted live to YouTube! Cleaning up raw clip and temporary files...")
+                        cleanup_clip_assets(raw_clip, ass_file, srt_file)
                 else:
                     print("[!] YouTube credentials not found. Run 'python youtube_uploader.py --auth' once to link your channel.")
             except Exception as e:
@@ -651,6 +770,8 @@ class AutoClipper:
         print(f"  ✂️   Clip Length: {self.duration}s ({self.pre_roll}s pre-roll)")
         print(f"  🗣️   Transcription: Multilingual 'base' (Hindi + English + Hinglish)")
         print(f"  🛡️   Anti-Copyright Protection: {'ACTIVE (Pitch/Zoom/EQ Shifts)' if self.anti_copyright else 'OFF'}")
+        print(f"  🎵  GTA Background Music: {'ACTIVE (Auto-Ducked @ ' + str(int(self.bgm_volume * 100)) + '%)' if self.use_bgm else 'OFF'}")
+        print(f"  🗑️   Auto-Cleanup: {'ACTIVE (Purges raw clips & temp files post-upload)' if self.auto_upload else 'OFF'}")
         print(f"  📐  Layout: {'9:16 Vertical Shorts/Reels' if self.vertical else '16:9 Landscape'}")
         print(f"  💾  Folder: {self.output_dir}")
         print("━" * 65 + "\n")
@@ -666,7 +787,7 @@ class AutoClipper:
 def main():
     p = argparse.ArgumentParser(description="Stealth Stream Auto-Clipper v4.0")
     p.add_argument("--platform", choices=["twitch", "youtube"], help="Platform (auto-detected if omitted)")
-    p.add_argument("--target", required=True, help="Streamer channel, handle, or URL")
+    p.add_argument("--target", default="", help="Streamer channel, handle, or URL")
     p.add_argument("--multiplier", type=float, default=2.0, help="Spike multiplier vs baseline (default: 2.0)")
     p.add_argument("--min-msgs", type=int, default=8, help="Min msgs/10s for spike trigger (default: 8)")
     p.add_argument("--pre-roll", type=int, default=25, help="Seconds before spike to cut (default: 25)")
@@ -677,10 +798,21 @@ def main():
     p.add_argument("--landscape", action="store_true", help="Output standard 16:9 widescreen instead of 9:16 vertical")
     p.add_argument("--no-subtitles", action="store_true", help="Disable subtitle generation")
     p.add_argument("--no-anti-copyright", action="store_true", help="Disable anti-copyright filters")
+    p.add_argument("--no-bgm", action="store_true", help="Disable GTA background music")
+    p.add_argument("--bgm-volume", type=float, default=0.08, help="BGM base volume (default: 0.08 = subtle)")
     p.add_argument("--auto-upload", action="store_true", help="Automatically upload saved clips to YouTube Shorts")
     p.add_argument("--privacy", default="public", choices=["public", "unlisted", "private"], help="YouTube upload privacy status")
+    p.add_argument("--clean-older", action="store_true", help="Purge older raw clips and temporary files now")
 
     args = p.parse_args()
+
+    if args.clean_older:
+        purge_old_raw_clips()
+        if not args.target:
+            return
+
+    if not args.target:
+        p.error("the following arguments are required: --target")
 
     if not args.platform:
         args.platform = "youtube" if (args.target.startswith("@") or "youtube" in args.target) else "twitch"
@@ -698,7 +830,9 @@ def main():
         no_subtitles=args.no_subtitles,
         anti_copyright=not args.no_anti_copyright,
         auto_upload=args.auto_upload,
-        privacy=args.privacy
+        privacy=args.privacy,
+        use_bgm=not args.no_bgm,
+        bgm_volume=args.bgm_volume
     ).run()
 
 
