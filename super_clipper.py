@@ -134,6 +134,14 @@ def main():
         print(f"Virality Score:  {result['audit']['score']}/10.0 (Passed: {result['audit']['passed']})")
         print("=" * 65)
 
+        # Generate Contextual Thumbnail
+        thumb_file = output_mp4.replace(".mp4", "_thumb.jpg")
+        import viral_hook_engine
+        hook_text = result.get("thumb_hook", "WATCH TILL END")
+        viral_hook_engine.create_clickbait_thumbnail(output_mp4, thumb_file, hook_text, FFMPEG)
+        if os.path.exists(thumb_file):
+            print(f"🖼️ [THUMBNAIL CREATED]: {thumb_file} (Hook: '{hook_text}')")
+
         if args.auto_upload and result['audit']['passed']:
             print("\n[*] Initiating YouTube Auto-Upload...")
             from youtube_uploader import YouTubeUploader

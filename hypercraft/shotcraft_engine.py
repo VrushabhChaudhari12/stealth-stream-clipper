@@ -2,8 +2,9 @@
 hypercraft/shotcraft_engine.py
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 Video Shotcraft cinematography engine.
-Transforms plain video into cinematic, high-retention 9:16 Shorts
-using shot recipes, beat-transient cuts, and multi-layer FFmpeg compositing.
+Transforms video into cinematic, high-retention 9:16 Shorts
+using contextual entity visual popups (like https://www.youtube.com/shorts/L9IGhWkwpgo),
+beat-transient cuts, and multi-layer FFmpeg compositing.
 """
 
 import os
@@ -33,19 +34,24 @@ def build_shotcraft_filter_graph(
     Renders the complete cinematic composition using multi-layer FFmpeg filter graphs:
       - Layer 0: Background 1080x1920 blurred + darkened
       - Layer 1: Foreground sharp gameplay with smooth Hook Push-In (1.0x -> 1.14x)
-      - Layer 2..N: Timed kinetic HUD cards & retention graph overlays
-      - Layer Top: Montserrat Black active yellow karaoke subtitles
+      - Layer 2..N: Contextual Entity Badges (Donald Mustard, Ronaldo, Young Speed)
+      - Layer Top: 1-2 word centered high-impact karaoke subtitles
       - Audio: Dialogue (100%) + Procedural SFX (80%) + Auto-Ducked BGM (8%)
     """
-    # 1. Render all visual card PNGs
+    # 1. Render or load all visual card PNGs
     rendered_cards = []
     for i, card in enumerate(visual_cards):
-        card_png = os.path.join(ASSETS_DIR, f"card_{i}.png")
-        if card.get("type") == "SWIPE_INDICATOR":
+        # If card already has an entity image path from asset_searcher
+        if card.get("image_path") and os.path.exists(card["image_path"]):
+            rendered_cards.append((card["image_path"], card["start"], card["end"]))
+        elif card.get("type") == "SWIPE_INDICATOR":
+            card_png = os.path.join(ASSETS_DIR, f"card_{i}.png")
             render_retention_graph_overlay(card_png)
+            rendered_cards.append((card_png, card["start"], card["end"]))
         else:
+            card_png = os.path.join(ASSETS_DIR, f"card_{i}.png")
             render_kinetic_hud_card(card, card_png)
-        rendered_cards.append((card_png, card["start"], card["end"]))
+            rendered_cards.append((card_png, card["start"], card["end"]))
 
     # 2. Build Video Filter Graph
     inputs = ["-i", source_video]
@@ -86,7 +92,7 @@ def build_shotcraft_filter_graph(
                 curr_v = next_v
                 input_idx += 1
 
-    # Overlay kinetic HUD cards at exact word-anchored timestamps
+    # Overlay contextual entity badges at exact word timestamps
     for i, (card_png, start_t, end_t) in enumerate(rendered_cards):
         inputs.extend(["-i", card_png])
         next_v = f"[base_card_{i+1}]"
