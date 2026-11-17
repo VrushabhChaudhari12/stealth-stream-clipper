@@ -52,11 +52,15 @@ def generate_explainer_audio(text: str, output_wav: str):
 
 def main():
     parser = argparse.ArgumentParser(description="HyperCraft Super-Clipper v5.0")
-    parser.add_argument("--mode", choices=["explainer", "vod", "live"], default="explainer",
+    parser.add_argument("--mode", choices=["explainer", "vod", "live"], default="vod",
                         help="Mode of operation: explainer video, vod slicing, or live stream monitoring")
-    parser.add_argument("--source", default="stream_IShowSpeed.ts", help="Source video footage")
-    parser.add_argument("--duration", type=float, default=26.0, help="Duration of clip in seconds")
-    parser.add_argument("--title", default="Why Your Shorts Get Stuck at 200 Views", help="Video Title")
+    parser.add_argument("--source", default=r"D:\GTA clipping\clips\IShowSpeed\clip_20261117_015759_raw.mp4",
+                        help="Source video footage")
+    parser.add_argument("--start-time", "--ss", type=float, default=0.0, help="Start offset in seconds")
+    parser.add_argument("--duration", type=float, default=35.0, help="Duration of clip in seconds")
+    parser.add_argument("--title", default="IShowSpeed Portuguese Ronaldo Moment Gone Insane 🇵🇹", help="Video Title")
+    parser.add_argument("--target", default="IShowSpeed", help="Target creator name")
+    parser.add_argument("--output", default=None, help="Custom output video path")
     parser.add_argument("--auto-upload", action="store_true", help="Auto-upload to YouTube if virality gate passes")
     parser.add_argument("--privacy", default="public", choices=["public", "unlisted", "private"])
 
@@ -70,7 +74,13 @@ def main():
         print(f"[!] Source video {source_video} not found!")
         sys.exit(1)
 
-    output_mp4 = os.path.join(DIR, "clips", "hypercraft_cinematic_short.mp4")
+    if args.output:
+        output_mp4 = os.path.abspath(args.output)
+    else:
+        out_dir = os.path.join(DIR, "clips", args.target)
+        os.makedirs(out_dir, exist_ok=True)
+        output_mp4 = os.path.join(out_dir, f"{args.target.lower()}_v5_hypercraft.mp4")
+
     dialogue_wav = os.path.join(DIR, "clips", "hypercraft_dialogue.wav")
 
     if args.mode == "explainer":
@@ -87,13 +97,15 @@ def main():
         with wave.open(dialogue_wav, "r") as wf:
             real_duration = wf.getnframes() / float(wf.getframerate())
     else:
-        # VOD mode: extract audio from source video
-        real_duration = args.duration
+        # VOD mode: extract audio from source video starting at args.start_time
+        print(f"[*] Extracting dialogue audio from {os.path.basename(source_video)} (start={args.start_time}s, dur={args.duration}s)...")
         cmd = [
-            FFMPEG, "-y", "-ss", "30", "-i", source_video,
-            "-t", str(real_duration), "-ar", "16000", "-ac", "1", dialogue_wav
+            FFMPEG, "-y", "-ss", str(args.start_time), "-i", source_video,
+            "-t", str(args.duration), "-ar", "16000", "-ac", "1", dialogue_wav
         ]
         subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=True)
+        with wave.open(dialogue_wav, "r") as wf:
+            real_duration = wf.getnframes() / float(wf.getframerate())
 
     bgm_track = select_bgm()
     print(f"[*] Selected Soundtrack: {os.path.basename(bgm_track) if bgm_track else 'None'}")
@@ -106,7 +118,8 @@ def main():
         output_mp4=output_mp4,
         bgm_track=bgm_track,
         title=args.title,
-        target_streamer="IShowSpeed"
+        target_streamer=args.target,
+        start_sec=args.start_time
     )
 
     if result.get("success"):
@@ -132,11 +145,11 @@ def main():
                     description=(
                         f"{args.title}\n\n"
                         "⚠️ Rated 18% Spicy | Unfiltered creator truth & harsh algorithm realities. Viewer discretion advised.\n\n"
-                        "#Shorts #YouTubeAlgorithm #CreatorTips #AlgorithmHacks #Gaming"
+                        "#Shorts #IShowSpeed #Gaming #SpeedClips #Ronaldo"
                     ),
-                    tags=["shorts", "youtube algorithm", "creator tips", "gaming"],
+                    tags=["shorts", "ishowspeed", "gaming", "speed clips", "ronaldo"],
                     privacy_status=args.privacy,
-                    category_id="27"
+                    category_id="20"  # Gaming category
                 )
     else:
         print(f"[!] Pipeline failed: {result.get('error')}")

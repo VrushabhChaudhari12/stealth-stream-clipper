@@ -26,7 +26,8 @@ def build_shotcraft_filter_graph(
     sfx_wav: str | None = None,
     bgm_track: str | None = None,
     bgm_volume: float = 0.08,
-    broll_cues: list[dict] | None = None
+    broll_cues: list[dict] | None = None,
+    start_sec: float = 0.0
 ) -> bool:
     """
     Renders the complete cinematic composition using multi-layer FFmpeg filter graphs:
@@ -51,13 +52,13 @@ def build_shotcraft_filter_graph(
     
     # Base background: blurred, darkened, 60fps
     vf_parts = [
-        f"[0:v]trim=start=30:duration={duration},setpts=PTS-STARTPTS,"
+        f"[0:v]trim=start={start_sec}:duration={duration},setpts=PTS-STARTPTS,"
         f"scale=1080:1920:force_original_aspect_ratio=increase,crop=1080:1920,boxblur=25:3,eq=brightness=-0.14:saturation=1.2[bg];"
     ]
 
     # Foreground: smooth cinematic push-in zoom (0-3s) + continuous breathing drift
     vf_parts.append(
-        f"[0:v]trim=start=30:duration={duration},setpts=PTS-STARTPTS,"
+        f"[0:v]trim=start={start_sec}:duration={duration},setpts=PTS-STARTPTS,"
         f"zoompan=z='if(lte(it,2.5),1.0+0.14*(it/2.5),1.14)':d=1:x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':s=1080x1920:fps=60,"
         f"scale=1080:-1,eq=contrast=1.06:brightness=0.02:saturation=1.12[fg];"
     )

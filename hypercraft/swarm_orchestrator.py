@@ -36,7 +36,8 @@ class SwarmOrchestrator:
         output_mp4: str,
         bgm_track: str | None = None,
         title: str = "Viral Clip #Shorts",
-        target_streamer: str = "IShowSpeed"
+        target_streamer: str = "IShowSpeed",
+        start_sec: float = 0.0
     ) -> dict:
         """
         Executes the autonomous 5-agent swarm pipeline:
@@ -83,7 +84,8 @@ class SwarmOrchestrator:
             sfx_wav=sfx_wav,
             bgm_track=bgm_track,
             bgm_volume=0.08,
-            broll_cues=broll_cues
+            broll_cues=broll_cues,
+            start_sec=start_sec
         )
 
         if not success or not os.path.exists(output_mp4):
