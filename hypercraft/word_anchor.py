@@ -8,6 +8,8 @@ shot cuts, and sound effect triggers directly to spoken words.
 
 import re
 
+from hypercraft.broll_engine import get_broll_for_keyword
+
 TRIGGER_PATTERNS = [
     # Danger / Negative Hook triggers
     {
@@ -48,17 +50,19 @@ TRIGGER_PATTERNS = [
 ]
 
 
-def anchor_words_to_events(words: list[dict], total_duration: float) -> tuple[list[dict], list[dict], list[dict]]:
+def anchor_words_to_events(words: list[dict], total_duration: float) -> tuple[list[dict], list[dict], list[dict], list[dict]]:
     """
     Parses Whisper word timestamps.
     Returns:
       - visual_cards: list of kinetic HUD cards to render on screen
       - sfx_cues: list of audio sound effects synchronized to words
       - camera_moves: list of shot zoom/pan intervals
+      - broll_cues: list of B-roll cutaway video clips
     """
     visual_cards = []
     sfx_cues = []
     camera_moves = []
+    broll_cues = []
 
     # Always insert an opening hook camera push-in (0.0 to 2.5s)
     camera_moves.append({
@@ -71,10 +75,27 @@ def anchor_words_to_events(words: list[dict], total_duration: float) -> tuple[li
     sfx_cues.append({"type": "whoosh", "time": 0.05, "volume": 0.65})
 
     last_card_end = 0.0
+    last_broll_end = 4.0  # Reserve 0-4s for opening hook without B-roll interruption
+
     for w in words:
         clean_word = re.sub(r"[^a-zA-Z0-9%]", "", w.get("word", "").lower())
         start_time = float(w.get("start", 0.0))
         end_time = float(w.get("end", start_time + 0.3))
+
+        # Check for B-roll triggers
+        if clean_word in ["algorithm", "jails", "trapped", "swipe", "percent", "kills"]:
+            if start_time >= last_broll_end + 3.0:
+                broll_path = get_broll_for_keyword(clean_word)
+                if broll_path:
+                    broll_dur = 1.5
+                    broll_cues.append({
+                        "keyword": clean_word,
+                        "path": broll_path,
+                        "start": start_time,
+                        "end": min(start_time + broll_dur, total_duration),
+                        "duration": broll_dur
+                    })
+                    last_broll_end = start_time + broll_dur
 
         for pattern in TRIGGER_PATTERNS:
             if clean_word in pattern["keywords"]:
@@ -117,4 +138,4 @@ def anchor_words_to_events(words: list[dict], total_duration: float) -> tuple[li
             "volume": 0.6
         })
 
-    return visual_cards, sfx_cues, camera_moves
+    return visual_cards, sfx_cues, camera_moves, broll_cues

@@ -25,7 +25,8 @@ def build_shotcraft_filter_graph(
     dialogue_wav: str,
     sfx_wav: str | None = None,
     bgm_track: str | None = None,
-    bgm_volume: float = 0.08
+    bgm_volume: float = 0.08,
+    broll_cues: list[dict] | None = None
 ) -> bool:
     """
     Renders the complete cinematic composition using multi-layer FFmpeg filter graphs:
@@ -64,13 +65,30 @@ def build_shotcraft_filter_graph(
     # Composite BG + FG
     vf_parts.append(f"[bg][fg]overlay=(W-w)/2:(H-h)/2[base0];")
 
-    # Overlay kinetic HUD cards at exact word-anchored timestamps
     curr_v = "[base0]"
     input_idx = 1
+
+    # Overlay B-roll cutaway video clips
+    if broll_cues:
+        for j, broll in enumerate(broll_cues):
+            b_path = broll.get("path")
+            if b_path and os.path.exists(b_path):
+                inputs.extend(["-i", b_path])
+                b_start = broll["start"]
+                b_end = broll["end"]
+                b_scaled = f"[broll_scale_{j}]"
+                vf_parts.append(
+                    f"[{input_idx}:v]scale=1080:1920:force_original_aspect_ratio=increase,crop=1080:1920,setpts=PTS-STARTPTS+{b_start}/TB{b_scaled};"
+                )
+                next_v = f"[base_broll_{j}]"
+                vf_parts.append(f"{curr_v}{b_scaled}overlay=0:0:enable='between(t,{b_start:.2f},{b_end:.2f})'{next_v};")
+                curr_v = next_v
+                input_idx += 1
+
+    # Overlay kinetic HUD cards at exact word-anchored timestamps
     for i, (card_png, start_t, end_t) in enumerate(rendered_cards):
         inputs.extend(["-i", card_png])
-        next_v = f"[base{i+1}]"
-        # Fade in 0.15s, fade out 0.15s
+        next_v = f"[base_card_{i+1}]"
         fade_expr = f"enable='between(t,{start_t:.2f},{end_t:.2f})'"
         vf_parts.append(f"{curr_v}[{input_idx}:v]overlay=0:0:{fade_expr}{next_v};")
         curr_v = next_v

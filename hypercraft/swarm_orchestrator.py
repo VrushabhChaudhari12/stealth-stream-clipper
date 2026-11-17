@@ -56,9 +56,9 @@ class SwarmOrchestrator:
         print(f"[✔] Aligned {len(all_words)} words across {duration:.1f}s")
 
         # Step 2: Word Anchor Agent - Bind kinetic events & SFX cues
-        print("[🤖 WordAnchor Agent] Binding kinetic HUD cards & SFX cues to spoken words...")
-        visual_cards, sfx_cues, camera_moves = anchor_words_to_events(all_words, duration)
-        print(f"[✔] Scheduled {len(visual_cards)} kinetic HUD cards & {len(sfx_cues)} SFX cues")
+        print("[🤖 WordAnchor Agent] Binding kinetic HUD cards, B-roll cutaways & SFX cues to spoken words...")
+        visual_cards, sfx_cues, camera_moves, broll_cues = anchor_words_to_events(all_words, duration)
+        print(f"[✔] Scheduled {len(visual_cards)} kinetic HUD cards, {len(broll_cues)} B-roll cutaways & {len(sfx_cues)} SFX cues")
 
         # Step 3: Sound Engineer Agent - Assemble procedural SFX track
         print("[🤖 SoundEngineer Agent] Building synchronized SFX track (whooshes, pops, bass hits)...")
@@ -82,7 +82,8 @@ class SwarmOrchestrator:
             dialogue_wav=dialogue_wav,
             sfx_wav=sfx_wav,
             bgm_track=bgm_track,
-            bgm_volume=0.08
+            bgm_volume=0.08,
+            broll_cues=broll_cues
         )
 
         if not success or not os.path.exists(output_mp4):
@@ -106,6 +107,7 @@ class SwarmOrchestrator:
             "duration": duration,
             "audit": audit,
             "cards_count": len(visual_cards),
+            "broll_count": len(broll_cues),
             "sfx_count": len(sfx_cues)
         }
 

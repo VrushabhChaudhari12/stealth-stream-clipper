@@ -116,6 +116,7 @@ def main():
         print(f"Output File:     {output_mp4}")
         print(f"Duration:        {real_duration:.1f}s")
         print(f"Kinetic Cards:   {result['cards_count']}")
+        print(f"B-Roll Cutaways: {result.get('broll_count', 0)}")
         print(f"Sound FX Cues:   {result['sfx_count']}")
         print(f"Virality Score:  {result['audit']['score']}/10.0 (Passed: {result['audit']['passed']})")
         print("=" * 65)
