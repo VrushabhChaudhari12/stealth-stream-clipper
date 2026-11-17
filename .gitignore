@@ -29,6 +29,7 @@ env/
 
 # Ignore cloned repos and transcripts
 repos/
+reference_repos/
 transcript_*
 
 # Ignore local YouTube OAuth tokens and secrets
