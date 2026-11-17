@@ -156,13 +156,18 @@ class SwarmOrchestrator:
 
         # Run 7-Stage Pre-Flight Quality Gate
         from virality_engine import MasterQualityGate
+        from hypercraft.gap_analyzer import analyze_transcript_gaps
+        gap_actions = analyze_transcript_gaps(all_words, source_video)
+        has_dramatic = any(action == "PRESERVE_DRAMATIC" for _, _, action in gap_actions)
+
         mqg = MasterQualityGate()
         clip_meta = {
             "title": final_title,
             "duration": duration,
             "visual_cards": visual_cards,
             "sfx_count": len(sfx_cues),
-            "thumb_hook": context.get("thumb_hook", "")
+            "thumb_hook": context.get("thumb_hook", ""),
+            "dramatic_pause_verified": has_dramatic
         }
         gate_res = mqg.evaluate_clip(clip_meta, all_words, video_path=output_mp4)
         print(f"\n🛡️ [Master Quality Gate] Score: {gate_res['total_score']:.1f}/100.0 | Verdict: {gate_res['verdict']}")
