@@ -11,6 +11,7 @@ import os
 import subprocess
 from hypercraft.motion_crafter import render_kinetic_hud_card, render_retention_graph_overlay, ASSETS_DIR
 from hypercraft.sound_designer import build_sfx_track
+from hypercraft.splitscreen_engine import SplitScreenEngine
 
 DIR = os.path.dirname(os.path.abspath(__file__))
 ROOT_DIR = os.path.dirname(DIR)
@@ -28,13 +29,13 @@ def build_shotcraft_filter_graph(
     bgm_track: str | None = None,
     bgm_volume: float = 0.08,
     broll_cues: list[dict] | None = None,
-    start_sec: float = 0.0
+    start_sec: float = 0.0,
+    layout_mode: str = "auto"
 ) -> bool:
     """
     Renders the complete cinematic composition using multi-layer FFmpeg filter graphs:
-      - Layer 0: Background 1080x1920 blurred + darkened
-      - Layer 1: Foreground sharp gameplay with smooth Hook Push-In (1.0x -> 1.14x)
-      - Layer 2..N: Contextual Entity Badges (Donald Mustard, Ronaldo, Young Speed)
+      - Layout: auto, cinematic (9:16 push-in), or reaction_split (top facecam + bottom game)
+      - Layer Context: Contextual Entity Badges (Donald Mustard, Ronaldo, Young Speed)
       - Layer Top: 1-2 word centered high-impact karaoke subtitles
       - Audio: Dialogue (100%) + Procedural SFX (80%) + Auto-Ducked BGM (8%)
     """
@@ -55,24 +56,39 @@ def build_shotcraft_filter_graph(
 
     # 2. Build Video Filter Graph
     inputs = ["-i", source_video]
-    
-    # Base background: blurred, darkened, 60fps
-    vf_parts = [
-        f"[0:v]trim=start={start_sec}:duration={duration},setpts=PTS-STARTPTS,"
-        f"scale=1080:1920:force_original_aspect_ratio=increase,crop=1080:1920,boxblur=25:3,eq=brightness=-0.14:saturation=1.2[bg];"
-    ]
+    vf_parts = []
 
-    # Foreground: smooth cinematic push-in zoom (0-3s) + continuous breathing drift
-    vf_parts.append(
-        f"[0:v]trim=start={start_sec}:duration={duration},setpts=PTS-STARTPTS,"
-        f"zoompan=z='if(lte(it,2.5),1.0+0.14*(it/2.5),1.14)':d=1:x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':s=1080x1920:fps=60,"
-        f"scale=1080:-1,eq=contrast=1.06:brightness=0.02:saturation=1.12[fg];"
-    )
+    use_split = False
+    if layout_mode == "reaction_split":
+        use_split = True
+    elif layout_mode == "auto":
+        # Check if video has corner facecam
+        se = SplitScreenEngine()
+        samples = se.face_tracker.sample_video_faces(source_video, num_samples=10)
+        face = se.face_tracker.find_reactor_face(1920, 1080, samples)
+        if face is not None:
+            use_split = True
 
-    # Composite BG + FG
-    vf_parts.append(f"[bg][fg]overlay=(W-w)/2:(H-h)/2[base0];")
+    if use_split:
+        se = SplitScreenEngine()
+        split_res = se.build_reaction_split_filter(source_video)
+        vf_parts.append(split_res["filter_graph"] + ";")
+        curr_v = split_res["output_label"]
+    else:
+        # Base background: blurred, darkened, 60fps
+        vf_parts.append(
+            f"[0:v]trim=start={start_sec}:duration={duration},setpts=PTS-STARTPTS,"
+            f"scale=1080:1920:force_original_aspect_ratio=increase,crop=1080:1920,boxblur=25:3,eq=brightness=-0.14:saturation=1.2[bg];"
+        )
+        # Foreground: smooth cinematic push-in zoom (0-3s) + continuous breathing drift
+        vf_parts.append(
+            f"[0:v]trim=start={start_sec}:duration={duration},setpts=PTS-STARTPTS,"
+            f"zoompan=z='if(lte(it,2.5),1.0+0.14*(it/2.5),1.14)':d=1:x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':s=1080x1920:fps=60,"
+            f"scale=1080:-1,eq=contrast=1.06:brightness=0.02:saturation=1.12[fg];"
+        )
+        vf_parts.append(f"[bg][fg]overlay=(W-w)/2:(H-h)/2[base0];")
+        curr_v = "[base0]"
 
-    curr_v = "[base0]"
     input_idx = 1
 
     # Overlay B-roll cutaway video clips

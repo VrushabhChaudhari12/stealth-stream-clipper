@@ -14,6 +14,7 @@ Coordinates specialized agents across:
 import os
 import sys
 import json
+import subprocess
 from faster_whisper import WhisperModel
 
 from hypercraft.context_analyzer import analyze_clip_context
@@ -45,7 +46,8 @@ class SwarmOrchestrator:
         title: str | None = None,
         target_streamer: str = "Streamer",
         start_sec: float = 0.0,
-        language: str = "en"
+        language: str = "en",
+        layout_mode: str = "auto"
     ) -> dict:
         """
         Executes the context-aware editing pipeline:
@@ -56,6 +58,17 @@ class SwarmOrchestrator:
           5. Multi-layer compositing + auto-ducked soundtrack
           6. Virality benchmark audit
         """
+        # Auto-extract dialogue WAV if missing
+        if not os.path.exists(dialogue_wav):
+            if not dialogue_wav.endswith(".wav"):
+                dialogue_wav = os.path.splitext(source_video)[0] + "_extracted.wav"
+            print(f"[🤖 Director Agent] Extracting dialogue audio to {dialogue_wav}...")
+            ffmpeg_cmd = [
+                os.path.join(ROOT_DIR, "ffmpeg.exe") if os.path.exists(os.path.join(ROOT_DIR, "ffmpeg.exe")) else "ffmpeg",
+                "-y", "-i", source_video, "-vn", "-acodec", "pcm_s16le", "-ar", "16000", "-ac", "1", dialogue_wav
+            ]
+            subprocess.run(ffmpeg_cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+
         # Step 1: Director Agent - Transcribe cleanly
         print(f"\n[🤖 Director Agent] Transcribing dialogue with '{language}' language enforcement...")
         segments, _ = self.whisper.transcribe(dialogue_wav, word_timestamps=True, language=language, beam_size=3)
@@ -120,7 +133,8 @@ class SwarmOrchestrator:
             sfx_wav=sfx_wav,
             bgm_track=bgm_track,
             bgm_volume=0.08,
-            start_sec=start_sec
+            start_sec=start_sec,
+            layout_mode=layout_mode
         )
 
         if not success or not os.path.exists(output_mp4):
@@ -128,8 +142,8 @@ class SwarmOrchestrator:
 
         final_title = title if title else context["title"]
 
-        # Step 7: Virality Auditor Agent
-        print("\n[🤖 Virality Auditor Agent] Auditing output against 2026 viral benchmark...")
+        # Step 7: Virality Auditor Agent & Master Quality Gate
+        print("\n[🤖 Virality Auditor Agent] Auditing output against 2026 viral benchmark & Master Quality Gate...")
         audit = ViralityTester.audit_clip(
             video_path=output_mp4,
             transcript_words=all_words,
@@ -140,12 +154,31 @@ class SwarmOrchestrator:
         for check, detail in audit.get("checks", {}).items():
             print(f"  • {check}: {detail}")
 
+        # Run 7-Stage Pre-Flight Quality Gate
+        from virality_engine import MasterQualityGate
+        mqg = MasterQualityGate()
+        clip_meta = {
+            "title": final_title,
+            "duration": duration,
+            "visual_cards": visual_cards,
+            "sfx_count": len(sfx_cues),
+            "thumb_hook": context.get("thumb_hook", "")
+        }
+        gate_res = mqg.evaluate_clip(clip_meta, all_words, video_path=output_mp4)
+        print(f"\n🛡️ [Master Quality Gate] Score: {gate_res['total_score']:.1f}/100.0 | Verdict: {gate_res['verdict']}")
+        print(f"  • Passing Threshold: {gate_res['threshold']}")
+        if gate_res.get("gate_failures"):
+            print(f"  • Gate Failures: {gate_res['gate_failures']}")
+        for st_name, score in gate_res.get("score_breakdown", {}).items():
+            print(f"    - {st_name}: {score} pts")
+
         return {
             "success": True,
             "output_mp4": output_mp4,
             "duration": duration,
             "context": context,
             "audit": audit,
+            "gate_evaluation": gate_res,
             "cards_count": len(visual_cards),
             "sfx_count": len(sfx_cues),
             "title": final_title,
