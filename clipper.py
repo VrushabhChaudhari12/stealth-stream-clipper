@@ -476,6 +476,7 @@ class AutoClipper:
         self.use_bgm = bool(cfg.get("use_bgm", True))
         self.bgm_volume = float(cfg.get("bgm_volume", 0.08))
         self.bgm_dir = cfg.get("bgm_dir", GTA_TRACKS_DIR)
+        self.trigger_now = int(cfg.get("trigger_now", 0))
 
         # Determine stream url and clean name
         _, streamer_slug = self._stream_url()
@@ -574,7 +575,7 @@ class AutoClipper:
 
     def _clip_worker(self, spike_time: float):
         # Buffer post-roll to ensure complete reaction is written to disk
-        post_wait = max(6, self.duration - self.pre_roll + 6)
+        post_wait = 2 if self.trigger_now > 0 else max(6, self.duration - self.pre_roll + 6)
         print(f"[*] Buffering {post_wait}s post-spike stream to disk...")
         time.sleep(post_wait)
 
@@ -587,6 +588,8 @@ class AutoClipper:
 
         offset = spike_time - self.stream_start
         start_sec = max(0, int(offset - self.pre_roll))
+        if offset < (self.duration + self.pre_roll):
+            start_sec = 0
         ts = datetime.now().strftime("%Y%m%d_%H%M%S")
 
         raw_clip = os.path.join(self.output_dir, f"clip_{ts}_raw.mp4")
@@ -597,8 +600,15 @@ class AutoClipper:
 
         print(f"[*] Slicing {self.duration}s synced segment from {start_sec}s...")
         if not slice_stream_sync(self.stream_file, start_sec, self.duration, raw_clip):
-            print("[!] Failed to cut raw clip.")
-            return
+            if start_sec > 0:
+                print(f"[*] Retrying slice from beginning (0s)...")
+                start_sec = 0
+                if not slice_stream_sync(self.stream_file, 0, self.duration, raw_clip):
+                    print("[!] Failed to cut raw clip.")
+                    return
+            else:
+                print("[!] Failed to cut raw clip.")
+                return
         print(f"[✔] Sliced raw clip: {os.path.basename(raw_clip)}")
 
         # Multilingual transcription
@@ -619,17 +629,43 @@ class AutoClipper:
             if bgm_track:
                 print(f"🎵 [GTA BGM] Selected: '{os.path.basename(bgm_track)}' (Volume: {self.bgm_volume * 100:.0f}%, Ducking: ACTIVE)")
 
-        print(f"[*] Rendering viral clip (Vertical: {self.vertical}, Anti-Copyright: {self.anti_copyright})...")
-        render_viral_clip(
-            raw_clip=raw_clip,
-            ass_path=ass_file if ass_ready else None,
-            output_mp4=final_clip,
-            channel_name=channel,
-            vertical=self.vertical,
-            anti_copyright=self.anti_copyright,
-            bgm_track=bgm_track,
-            bgm_volume=self.bgm_volume
-        )
+        v5_rendered = False
+        try:
+            from hypercraft.swarm_orchestrator import SwarmOrchestrator
+            print("\n[⚡ V5 HYPERCRAFT] Engaging Autonomous 5-Agent Swarm for Live Clip...")
+            orchestrator = SwarmOrchestrator(whisper_model="base")
+            dialogue_wav = os.path.join(self.output_dir, f"clip_{ts}_dialogue.wav")
+            cmd_wav = [
+                FFMPEG, "-y", "-i", raw_clip, "-ar", "16000", "-ac", "1", dialogue_wav
+            ]
+            subprocess.run(cmd_wav, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=True)
+
+            res = orchestrator.run_pipeline(
+                source_video=raw_clip,
+                dialogue_wav=dialogue_wav,
+                duration=float(self.duration),
+                output_mp4=final_clip,
+                bgm_track=bgm_track,
+                title=f"{channel} Insane Live Gaming Spike 🚨 #Shorts",
+                target_streamer=channel,
+                start_sec=0.0
+            )
+            v5_rendered = res.get("success", False)
+        except Exception as e:
+            print(f"[!] HyperCraft V5 error ({e}). Falling back to v4 renderer...")
+
+        if not v5_rendered:
+            print(f"[*] Rendering viral clip (Vertical: {self.vertical}, Anti-Copyright: {self.anti_copyright})...")
+            render_viral_clip(
+                raw_clip=raw_clip,
+                ass_path=ass_file if ass_ready else None,
+                output_mp4=final_clip,
+                channel_name=channel,
+                vertical=self.vertical,
+                anti_copyright=self.anti_copyright,
+                bgm_track=bgm_track,
+                bgm_volume=self.bgm_volume
+            )
         print(f"🎉 [CLIP READY] Saved -> {final_clip}")
 
         # Emotion & 18% Spicy Title / Thumbnail Generation
@@ -837,6 +873,14 @@ class AutoClipper:
 
         threading.Thread(target=self._record, daemon=True).start()
 
+        if self.trigger_now > 0:
+            def _trigger_delayed():
+                print(f"\n[⏱️ LIVE TEST MODE] Waiting {self.trigger_now}s to buffer initial live stream footage...")
+                time.sleep(self.trigger_now)
+                print(f"\n[🚀 LIVE TEST TRIGGER] Forcing live clip extraction at {datetime.now().strftime('%H:%M:%S')}!")
+                self._clip_worker(time.time())
+            threading.Thread(target=_trigger_delayed, daemon=True).start()
+
         if self.platform == "twitch":
             self._twitch_irc()
         else:
@@ -863,6 +907,7 @@ def main():
     p.add_argument("--privacy", default="public", choices=["public", "unlisted", "private"], help="YouTube upload privacy status")
     p.add_argument("--clean-older", action="store_true", help="Purge older raw clips and temporary files now")
     p.add_argument("--slice-vod", type=int, default=-1, help="Offset in seconds to slice and publish a clip directly from recorded .ts stream while offline")
+    p.add_argument("--trigger-now", type=int, default=0, help="Test mode: force a clip extraction after N seconds of live buffering")
 
     args = p.parse_args()
 
@@ -892,7 +937,8 @@ def main():
         auto_upload=args.auto_upload,
         privacy=args.privacy,
         use_bgm=not args.no_bgm,
-        bgm_volume=args.bgm_volume
+        bgm_volume=args.bgm_volume,
+        trigger_now=args.trigger_now
     )
 
     if args.slice_vod >= 0:
