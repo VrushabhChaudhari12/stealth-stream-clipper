@@ -11,7 +11,7 @@ import os
 import subprocess
 from hypercraft.motion_crafter import render_kinetic_hud_card, render_retention_graph_overlay, ASSETS_DIR
 from hypercraft.sound_designer import build_sfx_track
-from hypercraft.splitscreen_engine import SplitScreenEngine
+from hypercraft.active_speaker_engine import ActiveSpeakerEngine
 
 DIR = os.path.dirname(os.path.abspath(__file__))
 ROOT_DIR = os.path.dirname(DIR)
@@ -58,22 +58,20 @@ def build_shotcraft_filter_graph(
     inputs = ["-i", source_video]
     vf_parts = []
 
-    use_split = False
-    if layout_mode == "reaction_split":
-        use_split = True
-    elif layout_mode == "auto":
-        # Check if video has corner facecam
-        se = SplitScreenEngine()
-        samples = se.face_tracker.sample_video_faces(source_video, num_samples=10)
-        face = se.face_tracker.find_reactor_face(1920, 1080, samples)
-        if face is not None:
-            use_split = True
+    use_active_speaker = False
+    dyn_res = None
+    if layout_mode in ("auto", "active_speaker", "reaction_split"):
+        ase = ActiveSpeakerEngine()
+        dyn_res = ase.build_dynamic_switcher_filter(source_video, duration)
+        if dyn_res.get("clusters"):
+            use_active_speaker = True
+            print(f"[🤖 ActiveSpeakerEngine] Active! {len(dyn_res['clusters'])} face clusters identified.")
+            for t in dyn_res.get("turns", []):
+                print(f"  • [{t['start']:04.1f}s - {t['end']:04.1f}s] -> Speaker_{t['speaker_id']+1}")
 
-    if use_split:
-        se = SplitScreenEngine()
-        split_res = se.build_reaction_split_filter(source_video)
-        vf_parts.append(split_res["filter_graph"] + ";")
-        curr_v = split_res["output_label"]
+    if use_active_speaker and dyn_res:
+        vf_parts.append(dyn_res["filter_graph"] + ";")
+        curr_v = dyn_res["output_label"]
     else:
         # Base background: blurred, darkened, 60fps
         vf_parts.append(
